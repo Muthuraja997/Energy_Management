@@ -11,6 +11,7 @@ import sys
 import tempfile
 from PIL import Image
 from pathlib import Path
+import pickle
 
 # Add parent directory to path so we can import our modules
 parent_dir = Path(__file__).parent.parent.absolute()
@@ -20,6 +21,7 @@ sys.path.append(str(parent_dir))
 from env import EnergyManagementEnv
 from stable_baselines3 import DQN
 
+
 # Page configuration
 st.set_page_config(
     page_title="Energy Management RL Dashboard",
@@ -27,6 +29,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Model paths
+MODEL_PATHS = {
+    "DQN": "models/final_model.zip",
+    "Random Forest": "models/random_forest_model.pkl",
+    "XGBoost": "models/xgboost_model.pkl"
+}
 
 # Custom CSS
 st.markdown("""
@@ -66,6 +75,8 @@ if 'env' not in st.session_state:
     st.session_state.env = None
 if 'model' not in st.session_state:
     st.session_state.model = None
+if 'model_type' not in st.session_state:
+    st.session_state.model_type = "DQN"
 if 'state' not in st.session_state:
     st.session_state.state = None
 if 'episode_history' not in st.session_state:
@@ -122,14 +133,19 @@ def reset_environment():
     return env, state
 
 # Function to load a model
-def load_model(model_path):
+def load_model(model_type, model_path):
     try:
-        model = DQN.load(model_path)
+        if model_type == "DQN":
+            model = DQN.load(model_path)
+        else:
+            with open(model_path, "rb") as f:
+                model = pickle.load(f)
         st.session_state.model = model
-        st.success(f"Model loaded successfully from {model_path}")
+        st.session_state.model_type = model_type
+        st.success(f"{model_type} model loaded successfully from {model_path}")
         return model
     except Exception as e:
-        st.error(f"Error loading model: {e}")
+        st.error(f"Error loading {model_type} model: {e}")
         return None
 
 # Function to add a state to the history
@@ -185,9 +201,18 @@ def take_step(action):
 # Function to get action from model
 def get_model_action(state):
     model = st.session_state.model
+    model_type = st.session_state.model_type
     if model:
-        action, _ = model.predict(state, deterministic=True)
-        return action
+        if model_type == "DQN":
+            action, _ = model.predict(state, deterministic=True)
+            return action
+        elif model_type in ["Random Forest", "XGBoost"]:
+            # Model expects 2D array
+            action = model.predict(np.array(state).reshape(1, -1))[0]
+            return action
+        else:
+            st.warning("Unknown model type. Using random action.")
+            return np.random.randint(0, 4)
     else:
         st.warning("No model loaded. Using random action.")
         return np.random.randint(0, 4)
@@ -483,26 +508,14 @@ st.title("⚡ Energy Management RL Dashboard")
 # Sidebar for controls
 with st.sidebar:
     st.header("Controls")
-    
-    # Model loading section
-    st.subheader("Load Model")
-    model_options = ["models/best/best_model.zip", "models/final_model.zip", "Upload custom model"]
-    model_choice = st.selectbox("Select model", model_options)
-    
-    if model_choice == "Upload custom model":
-        uploaded_model = st.file_uploader("Upload model file", type=["zip"])
-        if uploaded_model:
-            # Save uploaded model to temp file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
-                tmp_file.write(uploaded_model.getvalue())
-                tmp_model_path = tmp_file.name
-            
-            # Load the model
-            if st.button("Load Uploaded Model"):
-                load_model(tmp_model_path)
-    else:
-        if st.button("Load Selected Model"):
-            load_model(model_choice)
+    # Model selection and loading
+    st.subheader("Select Model")
+    model_types = list(MODEL_PATHS.keys())
+    selected_model_type = st.selectbox("Model Type", model_types, index=model_types.index(st.session_state.model_type) if 'model_type' in st.session_state else 0)
+    model_path = MODEL_PATHS[selected_model_type]
+    if st.button(f"Load {selected_model_type} Model"):
+        load_model(selected_model_type, model_path)
+    st.divider()
     
     st.divider()
     
