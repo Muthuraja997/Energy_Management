@@ -205,11 +205,11 @@ def get_model_action(state):
     if model:
         if model_type == "DQN":
             action, _ = model.predict(state, deterministic=True)
-            return action
+            return int(action)
         elif model_type in ["Random Forest", "XGBoost"]:
             # Model expects 2D array
             action = model.predict(np.array(state).reshape(1, -1))[0]
-            return action
+            return int(action)
         else:
             st.warning("Unknown model type. Using random action.")
             return np.random.randint(0, 4)
@@ -227,22 +227,22 @@ def run_episode(auto_run=False, delay=0.5):
     
     st.session_state.running_simulation = True
     
+    action_names = ['Use Solar', 'Use Battery', 'Use Grid', 'Use Solar+Battery']
     for step in range(24):  # One day = 24 hours
         if st.session_state.done:
             break
-        
         # Get action from model
         state = st.session_state.state
         action = get_model_action(state)
-        
         # Take step
         next_state, reward, done, truncated, info = take_step(action)
-        
+        # Recommendation display
+        recommended_source = action_names[action]
+        st.info(f"**Recommendation (Step {step+1}):** {recommended_source} (by {st.session_state.model_type} model)")
         # Update progress
         progress = (step + 1) / 24
         progress_bar.progress(progress)
         status_text.text(f"Step {step+1}/24 - Reward: {reward:.2f}")
-        
         if auto_run and not done and not truncated:
             time.sleep(delay)
         else:
@@ -267,10 +267,12 @@ def step_once():
     # Get action from model
     state = st.session_state.state
     action = get_model_action(state)
-    
     # Take step
     next_state, reward, done, truncated, info = take_step(action)
-    
+    # Recommendation display
+    action_names = ['Use Solar', 'Use Battery', 'Use Grid', 'Use Solar+Battery']
+    recommended_source = action_names[action]
+    st.info(f"**Recommendation:** {recommended_source} (by {st.session_state.model_type} model)")
     if done or truncated:
         st.success("Episode complete!")
 
@@ -518,24 +520,29 @@ with st.sidebar:
     st.divider()
     
     st.divider()
-    
-    # Simulation controls
-    st.subheader("Simulation")
-    
-    if st.button("Reset Environment"):
-        reset_environment()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("Step Once"):
-            step_once()
-    
-    with col2:
-        if st.button("Run Episode"):
-            auto_run = st.checkbox("Auto-run", value=True)
-            delay = st.slider("Delay (seconds)", 0.1, 2.0, 0.5)
-            run_episode(auto_run, delay)
+    # Show simulation controls only for DQN
+    if st.session_state.model_type == "DQN":
+        st.subheader("Simulation")
+        if st.button("Reset Environment"):
+            reset_environment()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Step Once"):
+                step_once()
+        with col2:
+            if st.button("Run Episode"):
+                auto_run = st.checkbox("Auto-run", value=True)
+                delay = st.slider("Delay (seconds)", 0.1, 2.0, 0.5)
+                run_episode(auto_run, delay)
+    else:
+        st.subheader("Manual Input for Prediction")
+        demand = st.number_input("Demand (kW)", min_value=0.0, max_value=100.0, value=float(st.session_state.state[0]) if st.session_state.state is not None else 0.0)
+        solar = st.number_input("Solar Generation (kW)", min_value=0.0, max_value=100.0, value=float(st.session_state.state[1]) if st.session_state.state is not None else 0.0)
+        battery_soc = st.number_input("Battery SOC (%)", min_value=0.0, max_value=100.0, value=float(st.session_state.state[2]) if st.session_state.state is not None else 0.0)
+        price = st.number_input("Electricity Price ($/kWh)", min_value=0.0, max_value=10.0, value=float(st.session_state.state[3]) if st.session_state.state is not None else 0.0)
+        time_of_day = st.slider("Time of Day (hour)", min_value=0, max_value=23, value=int(st.session_state.state[4]) if st.session_state.state is not None else 0)
+        # Update state for prediction
+        st.session_state.state = [demand, solar, battery_soc, price, time_of_day]
     
     st.divider()
     
@@ -563,68 +570,95 @@ with st.sidebar:
         st.metric("Total Grid Used", f"{total_grid:.2f} kWh")
 
 # Main content area
-# Current state visualization
-st.header("Current State")
-st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-display_current_state_metrics()
-st.markdown('</div>', unsafe_allow_html=True)
 
-# Initialize environment if not already done
-if st.session_state.env is None:
-    reset_environment()
 
-# Charts
-st.header("Monitoring")
 
-# First row of charts
-col1, col2 = st.columns(2)
 
-with col1:
-    demand_solar_chart = create_demand_solar_chart()
-    if demand_solar_chart:
-        st.plotly_chart(demand_solar_chart, use_container_width=True)
+
+
+
+
+
+
+
+
+
+
+# Main content area
+if st.session_state.model_type == "DQN":
+    # Current state visualization
+    st.header("Current State")
+    st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+    display_current_state_metrics()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Initialize environment if not already done
+    if st.session_state.env is None:
+        reset_environment()
+
+    # Charts
+    st.header("Monitoring")
+
+    # First row of charts
+    col1, col2 = st.columns(2)
+
+    with col1:
+        demand_solar_chart = create_demand_solar_chart()
+        if demand_solar_chart:
+            st.plotly_chart(demand_solar_chart, use_container_width=True)
+        else:
+            st.info("Run the simulation to see demand and solar data.")
+
+    with col2:
+        energy_sources_chart = create_energy_sources_chart()
+        if energy_sources_chart:
+            st.plotly_chart(energy_sources_chart, use_container_width=True)
+        else:
+            st.info("Run the simulation to see energy sources data.")
+
+    # Second row of charts
+    col1, col2 = st.columns(2)
+
+    with col1:
+        battery_soc_chart = create_battery_soc_chart()
+        if battery_soc_chart:
+            st.plotly_chart(battery_soc_chart, use_container_width=True)
+        else:
+            st.info("Run the simulation to see battery SOC data.")
+
+    with col2:
+        reward_chart = create_reward_chart()
+        if reward_chart:
+            st.plotly_chart(reward_chart, use_container_width=True)
+        else:
+            st.info("Run the simulation to see reward data.")
+
+    # Grid cost chart
+    grid_cost_chart = create_grid_cost_chart()
+    if grid_cost_chart:
+        st.plotly_chart(grid_cost_chart, use_container_width=True)
     else:
-        st.info("Run the simulation to see demand and solar data.")
+        st.info("Run the simulation to see grid cost data.")
 
-with col2:
-    energy_sources_chart = create_energy_sources_chart()
-    if energy_sources_chart:
-        st.plotly_chart(energy_sources_chart, use_container_width=True)
+    # Results table
+    st.header("Detailed Results")
+    results_table = create_results_table()
+    if results_table is not None:
+        st.dataframe(results_table, use_container_width=True)
     else:
-        st.info("Run the simulation to see energy sources data.")
+        st.info("Run the simulation to see detailed results.")
 
-# Second row of charts
-col1, col2 = st.columns(2)
-
-with col1:
-    battery_soc_chart = create_battery_soc_chart()
-    if battery_soc_chart:
-        st.plotly_chart(battery_soc_chart, use_container_width=True)
-    else:
-        st.info("Run the simulation to see battery SOC data.")
-
-with col2:
-    reward_chart = create_reward_chart()
-    if reward_chart:
-        st.plotly_chart(reward_chart, use_container_width=True)
-    else:
-        st.info("Run the simulation to see reward data.")
-
-# Grid cost chart
-grid_cost_chart = create_grid_cost_chart()
-if grid_cost_chart:
-    st.plotly_chart(grid_cost_chart, use_container_width=True)
 else:
-    st.info("Run the simulation to see grid cost data.")
+    # For Random Forest/XGBoost: Only show recommendation and manual input
+    st.header("Model Recommendation")
+    if st.session_state.model is not None:
+        state = st.session_state.state
+        action = get_model_action(state)
+        action_names = ['Use Solar', 'Use Battery', 'Use Grid', 'Use Solar+Battery']
+        recommended_source = action_names[action]
+        st.info(f"**Recommendation:** {recommended_source} (by {st.session_state.model_type} model)")
+    else:
+        st.warning("Please load a model to get recommendations.")
 
-# Results table
-st.header("Detailed Results")
-results_table = create_results_table()
-if results_table is not None:
-    st.dataframe(results_table, use_container_width=True)
-else:
-    st.info("Run the simulation to see detailed results.")
-
-# Add footer
-st.markdown("---")
-st.markdown("Energy Management RL Dashboard - Developed with Streamlit")
+    st.markdown("---")
+    st.markdown("Energy Management Dashboard - Developed with Streamlit")
